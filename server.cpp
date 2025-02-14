@@ -1,67 +1,94 @@
-#pragma comment(lib, "ws2_32.lib")
-#include <winsock2.h>
 #include <iostream>
 #include <string>
-#pragma warning(disable: 4996)
+#include <cstring>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <pthread.h>
 
-SOCKET Connections[2]; 
-int Counter = 0;       
+int Connections[2]; 
+int Counter = 0;    
 
-void ExchangeMessages() {
-    char msg[256];
-    while (true) {
+
+void* ExchangeMessages(void* arg) {
+    char msg[256]; 
+    while (true) { 
         
-        if (recv(Connections[0], msg, sizeof(msg), NULL) > 0) {
+        if (recv(Connections[0], msg, sizeof(msg), 0) > 0) {
             std::cout << "Encrypted message from Client 1: " << msg << std::endl;
-            send(Connections[1], msg, sizeof(msg), NULL);
+            send(Connections[1], msg, sizeof(msg), 0); 
         }
-
-        if (recv(Connections[1], msg, sizeof(msg), NULL) > 0) {
+        
+        if (recv(Connections[1], msg, sizeof(msg), 0) > 0) {
             std::cout << "Encrypted message from Client 2: " << msg << std::endl;
-            send(Connections[0], msg, sizeof(msg), NULL); 
+            send(Connections[0], msg, sizeof(msg), 0); 
         }
     }
+    return nullptr;
 }
 
 int main(int argc, char* argv[]) {
-   
-    WSAData wsaData;
-    WORD DLLVersion = MAKEWORD(2, 1);
-    if (WSAStartup(DLLVersion, &wsaData) != 0) {
-        std::cout << "WSAStartup failed!" << std::endl;
+    int sListen; 
+    sockaddr_in addr; 
+    int sizeofaddr = sizeof(addr); 
+
+    
+    sListen = socket(AF_INET, SOCK_STREAM, 0);
+    if (sListen == -1) {
+        std::cerr << "Socket creation failed!" << std::endl;
+        return 1;
+    }
+
+    
+    addr.sin_family = AF_INET; 
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1"); 
+    addr.sin_port = htons(1111); 
+    
+    if (bind(sListen, (sockaddr*)&addr, sizeof(addr)) == -1) {
+        std::cerr << "Binding failed!" << std::endl;
+        close(sListen);
         return 1;
     }
 
    
-    SOCKADDR_IN addr;
-    int sizeofaddr = sizeof(addr);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port = htons(1111);
-    addr.sin_family = AF_INET;
+    if (listen(sListen, 2) == -1) {
+        std::cerr << "Listen failed!" << std::endl;
+        close(sListen);
+        return 1;
+    }
 
-
-    SOCKET sListen = socket(AF_INET, SOCK_STREAM, NULL);
-    bind(sListen, (SOCKADDR*)&addr, sizeof(addr));
-    listen(sListen, 2); 
     std::cout << "Server is waiting for connections..." << std::endl;
 
-   
+    
     for (int i = 0; i < 2; i++) {
-        Connections[i] = accept(sListen, (SOCKADDR*)&addr, &sizeofaddr);
-        if (Connections[i] == INVALID_SOCKET) {
-            std::cout << "Client connection failed!" << std::endl;
+        Connections[i] = accept(sListen, (sockaddr*)&addr, (socklen_t*)&sizeofaddr);
+        if (Connections[i] == -1) { 
+            std::cerr << "Client connection failed!" << std::endl;
+            close(sListen);
             return 1;
         }
-        std::cout << "Client " << i + 1 << " connected!" << std::endl;
-        Counter++;
+        std::cout << "Client " << i + 1 << " connected!" << std::endl; 
+        Counter++; 
     }
 
-    ExchangeMessages();
+    
+    pthread_t thread;
+    if (pthread_create(&thread, nullptr, ExchangeMessages, nullptr) != 0) {
+        std::cerr << "Failed to create thread!" << std::endl;
+        close(sListen);
+        for (int i = 0; i < 2; i++) {
+            close(Connections[i]);
+        }
+        return 1;
+    }
 
-    closesocket(sListen);
+    
+    pthread_join(thread, nullptr);
+
+    
+    close(sListen);
     for (int i = 0; i < 2; i++) {
-        closesocket(Connections[i]);
+        close(Connections[i]);
     }
-    WSACleanup();
+
     return 0;
 }
